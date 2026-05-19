@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Smart Farm Tự Động</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.2.2/mqtt.min.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #f4f7f6; --card-bg: #ffffff; --text-main: #333;
+            --primary: #3498db; --danger: #e74c3c; --success: #2ecc71; --dark: #2c3e50;
+        }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg-color); margin: 0; color: var(--text-main); overflow-x: hidden; }
+        
+        .tab-menu { display: flex; background: var(--dark); padding: 5px 15px; gap: 8px; }
+        .tab-btn {
+            background: rgba(255,255,255,0.1); color: white; border: none; 
+            padding: 8px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.9em;
+        }
+        .tab-btn.active { background: var(--primary); }
+        
+        .tab-content { display: none; padding: 15px; }
+        .tab-content.active { display: block; }
+        .sys-status { text-align: right; font-size: 0.8em; font-weight: bold; padding: 5px 15px; background: white; border-bottom: 1px solid #ddd; }
+
+        /* TAB 1: KÍCH THƯỚC VÀ CĂN CHỈNH KHOẢNG CÁCH */
+        .node-grid { display: flex; flex-wrap: wrap; gap: 25px; align-items: flex-start; }
+        .node-card {
+            width: 30%; min-width: 280px; 
+            background: var(--card-bg); padding: 20px; border-radius: 10px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-top: 5px solid var(--primary);
+            transition: all 0.3s ease;
+        }
+        .node-title { font-size: 1.2em; font-weight: bold; margin-bottom: 15px; color: var(--dark); border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        .data-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px dashed #eee; font-size: 1.05em; }
+        .data-row:last-child { border-bottom: none; }
+        .val { font-weight: bold; font-size: 1.15em; }
+
+        /* HIỆU ỨNG NHẤP NHÁY CHO KHUNG CARD (TAB 1) */
+        @keyframes blinkRedCard { 
+            0%, 100% { background-color: var(--card-bg); box-shadow: 0 0 10px rgba(231,76,60,0.5); border-color: var(--danger); } 
+            50% { background-color: #fadbd8; box-shadow: 0 0 25px rgba(231,76,60,1); border-color: var(--danger); } 
+        }
+        @keyframes blinkGreenCard { 
+            0%, 100% { background-color: var(--card-bg); box-shadow: 0 0 10px rgba(46,204,113,0.5); border-color: var(--success); } 
+            50% { background-color: #d5f5e3; box-shadow: 0 0 25px rgba(46,204,113,1); border-color: var(--success); } 
+        }
+        
+        /* Class sẽ được gắn bằng Javascript khi có biến */
+        .alert-fire-card { animation: blinkRedCard 0.8s infinite !important; border-top: 5px solid var(--danger) !important; }
+        .alert-smoke-card { animation: blinkGreenCard 0.8s infinite !important; border-top: 5px solid var(--success) !important; }
+
+        .fire-alert-text { color: white; background: var(--danger); padding: 4px 12px; border-radius: 5px; animation: blinkText 0.5s infinite; font-size: 0.95em; }
+        @keyframes blinkText { 50% { opacity: 0; } }
+
+        /* TAB 2: DÀN 3 BIỂU ĐỒ NGANG */
+        .charts-wrapper { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; }
+        .chart-box { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .chart-box h3 { margin-top: 0; font-size: 1em; text-align: center; }
+
+        /* TAB 3: TÙY CHỌN BỘ LỌC */
+        .filter-tags { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
+        .tag-btn { background: white; border: 1px solid var(--primary); color: var(--primary); padding: 8px 15px; border-radius: 20px; cursor: pointer; font-weight: bold; font-size: 0.9em; }
+        .tag-btn:hover { background: var(--primary); color: white; }
+        .result-box { background: var(--primary); color: white; padding: 15px; border-radius: 8px; font-size: 1.2em; text-align: center; }
+
+        /* KHU VỰC THÔNG BÁO TRƯỢT (TOAST NOTIFICATIONS) */
+        #toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 15px; }
+        .toast { 
+            min-width: 280px; padding: 15px 20px; border-radius: 8px; color: white; font-weight: bold; font-size: 1.1em;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3); 
+            transform: translateX(120%); transition: transform 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            display: flex; align-items: center; justify-content: space-between; gap: 10px; border: 2px solid white;
+        }
+        .toast.show { transform: translateX(0); } /* Bật class này để trượt vào */
+        .toast-fire { background-color: var(--danger); animation: blinkText 0.5s infinite; }
+        .toast-smoke { background-color: var(--success); animation: blinkText 1s infinite; }
+        .close-toast { cursor: pointer; color: white; border: none; background: transparent; font-size: 1.5em; line-height: 1; }
+    </style>
+</head>
+<body>
+
+    <div id="toast-container"></div>
+
+    <div class="tab-menu">
+        <button class="tab-btn active" onclick="switchTab('tab1', this)"><i class="fa-solid fa-border-all"></i> Tổng Quan</button>
+        <button class="tab-btn" onclick="switchTab('tab2', this)"><i class="fa-solid fa-chart-area"></i> Biểu Đồ Thống Kê</button>
+        <button class="tab-btn" onclick="switchTab('tab3', this)"><i class="fa-solid fa-filter"></i> Phân Tích</button>
+    </div>
+    <div class="sys-status" id="mqtt-status" style="color: #e74c3c;">
+        <i class="fa-solid fa-spinner fa-spin"></i> Đang kết nối MQTT...
+    </div>
+
+    <div id="tab1" class="tab-content active">
+        <div class="node-grid" id="node-container"></div>
+    </div>
+
+    <div id="tab2" class="tab-content">
+        <div class="charts-wrapper">
+            <div class="chart-box">
+                <h3><i class="fa-solid fa-temperature-half" style="color:var(--danger)"></i> Nhiệt Độ (°C)</h3>
+                <canvas id="tempChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <h3><i class="fa-solid fa-droplet" style="color:var(--primary)"></i> Độ Ẩm (%)</h3>
+                <canvas id="humChart"></canvas>
+            </div>
+            <div class="chart-box">
+                <h3><i class="fa-solid fa-smog" style="color:var(--dark)"></i> Mức Khói</h3>
+                <canvas id="smokeChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div id="tab3" class="tab-content">
+        <div class="filter-tags">
+            <button class="tag-btn" onclick="findTopNode('T', 'Nóng nhất')">Khu vực Nóng Nhất</button>
+            <button class="tag-btn" onclick="findTopNode('H', 'Ẩm nhất')">Khu vực Ẩm Nhất</button>
+            <button class="tag-btn" onclick="findTopNode('G', 'Nhiều Khói nhất')">Khu vực Khói Nhất</button>
+        </div>
+        <div class="result-box" id="filter-result">Chọn một tiêu chí để phân tích dữ liệu!</div>
+    </div>
+
+    <script>
+        // --- NGƯỠNG BÁO ĐỘNG KHÓI (Bạn có thể sửa số 400 này cho phù hợp với cảm biến MQ-2) ---
+        const NGƯỠNG_KHOI_CAO = 400; 
+
+        // Biến lưu trữ trạng thái cảnh báo để tránh trượt thông báo liên tục
+        const alertStates = {}; 
+        const nodeMemory = {}; 
+
+        // CHUYỂN TAB
+        function switchTab(tabId, btnElement) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            btnElement.classList.add('active');
+        }
+
+        // BIỂU ĐỒ
+        const chartColors = ['#e74c3c', '#3498db', '#f1c40f', '#2ecc71', '#9b59b6'];
+        let colorCount = 0;
+        const chartOptions = { animation: false, scales: { x: { ticks: { font: { size: 10 } } } } };
+        const chartT = new Chart(document.getElementById('tempChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: chartOptions });
+        const chartH = new Chart(document.getElementById('humChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: chartOptions });
+        const chartS = new Chart(document.getElementById('smokeChart').getContext('2d'), { type: 'line', data: { labels: [], datasets: [] }, options: chartOptions });
+
+        function addDataToChart(chart, nodeName, value, timeStr) {
+            if (!chart.data.labels.includes(timeStr)) {
+                chart.data.labels.push(timeStr);
+                if(chart.data.labels.length > 10) chart.data.labels.shift(); 
+            }
+            let labelName = "Khu " + nodeName;
+            let dataset = chart.data.datasets.find(ds => ds.label === labelName);
+            if (!dataset) {
+                dataset = { label: labelName, data: [], borderColor: chartColors[colorCount % chartColors.length], fill: false, tension: 0.3, pointRadius: 2, borderWidth: 2 };
+                chart.data.datasets.push(dataset);
+            }
+            dataset.data.push(value);
+            if(dataset.data.length > 10) dataset.data.shift();
+            chart.update();
+        }
+
+        // HÀM TẠO THÔNG BÁO TRƯỢT (TOAST)
+        function showToast(type, message) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            
+            // Phân loại màu sắc icon và nền theo Loại báo động
+            let icon = type === 'fire' ? 'fa-fire' : 'fa-smog';
+            toast.className = `toast toast-${type}`;
+            
+            toast.innerHTML = `
+                <span><i class="fa-solid ${icon}"></i> &nbsp; ${message}</span>
+                <button class="close-toast" onclick="this.parentElement.classList.remove('show'); setTimeout(() => this.parentElement.remove(), 300);">&times;</button>
+            `;
+            
+            container.appendChild(toast);
+            
+            // Trượt vào sau 10ms (để css transition có thời gian chạy)
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            // Tự động tắt sau 8 giây
+            setTimeout(() => {
+                if (toast.parentElement) {
+                    toast.classList.remove('show');
+                    setTimeout(() => toast.remove(), 400);
+                }
+            }, 8000);
+        }
+
+        // TẠO THẺ VÀ CẬP NHẬT UI
+        function updateUINode(nodeName, data) {
+            let cardId = "card-" + nodeName;
+            let card = document.getElementById(cardId);
+            
+            if (!card) {
+                const container = document.getElementById('node-container');
+                card = document.createElement('div');
+                card.className = "node-card";
+                card.id = cardId;
+                card.innerHTML = `
+                    <div class="node-title"><i class="fa-solid fa-location-dot"></i> Khu ${nodeName}</div>
+                    <div class="data-row"><span><i class="fa-solid fa-temperature-half" style="color:var(--danger)"></i> Nhiệt độ</span><span class="val" id="t-${nodeName}">-- °C</span></div>
+                    <div class="data-row"><span><i class="fa-solid fa-droplet" style="color:var(--primary)"></i> Độ ẩm</span><span class="val" id="h-${nodeName}">-- %</span></div>
+                    <div class="data-row"><span><i class="fa-solid fa-smog" style="color:var(--dark)"></i> Khói</span><span class="val" id="g-${nodeName}">--</span></div>
+                    <div class="data-row"><span><i class="fa-solid fa-fire" style="color:#e67e22"></i> Báo Động</span><span class="val" id="f-${nodeName}">--</span></div>
+                `;
+                container.appendChild(card);
+                colorCount++; 
+            }
+
+            // Gắn dữ liệu số
+            let nhietDo = (data.T !== undefined && !isNaN(data.T)) ? data.T : "--";
+            let doAm = (data.H !== undefined && !isNaN(data.H)) ? data.H : "--";
+            document.getElementById(`t-${nodeName}`).innerText = nhietDo + " °C";
+            document.getElementById(`h-${nodeName}`).innerText = doAm + " %";
+            document.getElementById(`g-${nodeName}`).innerText = data.G;
+            
+            // Logic Cảnh báo trên Tab 1: Đổi class Nhấp nháy khung
+            card.classList.remove('alert-fire-card', 'alert-smoke-card'); // Xóa trạng thái cũ
+            const fireEl = document.getElementById(`f-${nodeName}`);
+            
+            if (data.F === 1) { // 1. Ưu tiên Lửa cao nhất (Nháy Đỏ)
+                card.classList.add('alert-fire-card');
+                fireEl.innerHTML = "CÓ CHÁY";
+                fireEl.className = "val fire-alert-text";
+            } 
+            else if (data.G >= NGƯỠNG_KHOI_CAO) { // 2. Nếu không có lửa mà khói cao (Nháy Xanh Lá)
+                card.classList.add('alert-smoke-card');
+                fireEl.innerHTML = "KHÓI CAO";
+                fireEl.className = "val";
+                fireEl.style.color = "var(--success)";
+            } 
+            else { // 3. An toàn
+                fireEl.innerText = "An toàn";
+                fireEl.className = "val";
+                fireEl.style.color = "var(--success)";
+            }
+        }
+
+        // LỌC DỮ LIỆU
+        function findTopNode(chiSo, tenGoi) {
+            let maxVal = -999; let topNode = "";
+            for (let node in nodeMemory) {
+                if (nodeMemory[node][chiSo] !== undefined && nodeMemory[node][chiSo] > maxVal) {
+                    maxVal = nodeMemory[node][chiSo];
+                    topNode = node;
+                }
+            }
+            const ketQuaDiv = document.getElementById('filter-result');
+            if (topNode === "") {
+                ketQuaDiv.innerText = "Chưa có đủ dữ liệu!";
+            } else {
+                let donVi = chiSo === 'T' ? '°C' : (chiSo === 'H' ? '%' : '');
+                ketQuaDiv.innerHTML = `🏆 <b>Khu ${topNode}</b> đang ${tenGoi} với mức: <b>${maxVal} ${donVi}</b>`;
+            }
+        }
+
+        // KẾT NỐI MQTT
+        const brokerUrl = 'ws://broker.hivemq.com:8000/mqtt';
+        const options = { clientId: 'web_farm_' + Math.random().toString(16).substr(2, 8) };
+        const client = mqtt.connect(brokerUrl, options);
+
+        client.on('connect', () => {
+            const statusEl = document.getElementById('mqtt-status');
+            statusEl.innerHTML = '<i class="fa-solid fa-wifi"></i> Đã kết nối MQTT (Thời gian thực)';
+            statusEl.style.color = 'var(--success)';
+            client.subscribe('hao_chinh_phuc_iot_2026/+/du_lieu'); 
+        });
+
+        client.on('message', (topic, message) => {
+            try {
+                const nodeName = topic.split('/')[1]; 
+                const data = JSON.parse(message.toString());
+
+                // 1. Cập nhật dữ liệu vào bộ nhớ & UI
+                nodeMemory[nodeName] = data;
+                updateUINode(nodeName, data);
+
+                // 2. Cập nhật Biểu đồ
+                const timeStr = new Date().toLocaleTimeString('vi-VN', {hour12: false});
+                if(data.T !== undefined) addDataToChart(chartT, nodeName, data.T, timeStr);
+                if(data.H !== undefined) addDataToChart(chartH, nodeName, data.H, timeStr);
+                if(data.G !== undefined) addDataToChart(chartS, nodeName, data.G, timeStr);
+
+                // ====================================================
+                // 3. LOGIC HIỂN THỊ THÔNG BÁO TRƯỢT (TOAST)
+                // ====================================================
+                // Khởi tạo bộ nhớ theo dõi trạng thái cảnh báo cho Node nếu chưa có
+                if (!alertStates[nodeName]) {
+                    alertStates[nodeName] = { fire: false, smoke: false };
+                }
+
+                // Kiểm tra xem người dùng có đang ở Tab 1 không
+                let isTab1Active = document.getElementById('tab1').classList.contains('active');
+                
+                // Cờ trạng thái hiện tại
+                let isFireNow = (data.F === 1);
+                let isSmokeHighNow = (data.G >= NGƯỠNG_KHOI_CAO);
+
+                // NẾU KHÔNG Ở TAB 1, ta mới trượt thông báo ra
+                if (!isTab1Active) {
+                    // Nếu phát hiện có lửa, và trước đó chưa báo lửa -> Trượt thông báo đỏ
+                    if (isFireNow && !alertStates[nodeName].fire) {
+                        showToast('fire', `CẢNH BÁO: Vị trí Khu ${nodeName} đang có cháy!`);
+                    } 
+                    // Nếu không có lửa nhưng Khói cao, và trước đó chưa báo khói -> Trượt thông báo xanh lá
+                    else if (!isFireNow && isSmokeHighNow && !alertStates[nodeName].smoke) {
+                        showToast('smoke', `Khu vực ${nodeName}: Nồng độ khói cao báo động!`);
+                    }
+                }
+
+                // Cập nhật lại bộ nhớ để vòng sau không báo lại nữa
+                alertStates[nodeName].fire = isFireNow;
+                alertStates[nodeName].smoke = isSmokeHighNow;
+
+            } catch (e) {
+                console.log("Lỗi:", e);
+            }
+        });
+    </script>
+</body>
+</html>
